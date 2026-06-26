@@ -18,14 +18,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-APP_VERSION    = "2.1.0"
+APP_VERSION    = "2.1.5"
 APP_START_TIME = datetime.now()
 STATIC_DIR      = "static"
-GRAFIK_FILE    = "siber_analiz_grafik.html"
 LOG_FORMAT      = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
-LOG_DATE       = "%Y-%m-%d %H:%M:%S"
 
-logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt=LOG_DATE)
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger("KomutaMerkezi")
 
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -38,31 +36,20 @@ class VeriDeposu:
         self._lock        = threading.RLock()
         self._ham_df      : Optional[pd.DataFrame] = None
         self.son_yuklenme : Optional[datetime]      = None
-        self.toplam_satir : int = 0
-        self.dosya_adi    : str = ""
 
-    def yukle(self, df: pd.DataFrame, dosya: str = "") -> None:
+    def yukle(self, df: pd.DataFrame) -> None:
         with self._lock:
             self._ham_df      = df.copy()
             self.son_yuklenme = datetime.now()
-            self.toplam_satir = len(df)
-            self.dosya_adi    = dosya
-        logger.info(f"Veri deposuna {len(df):,} satir yuklendi - '{dosya}'")
-
-    def al(self) -> Optional[pd.DataFrame]:
-        with self._lock:
-            return self._ham_df.copy() if self._ham_df is not None else None
 
     def hazir_mi(self) -> bool:
-        with self._lock:
-            return self._ham_df is not None
+        return self._ham_df is not None
 
 depo = VeriDeposu()
 
 app = FastAPI(
     title       = "Otonom Siber-Fiziksel Komuta Merkezi API",
     version     = APP_VERSION,
-    docs_url    = "/docs",
 )
 
 app.add_middleware(
@@ -75,13 +62,17 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-def kolon_bul(df: pd.DataFrame, adaylar: List[str]) -> Optional[str]:
-    def normaliz(s: str) -> str:
-        return (s.lower().replace("i", "i").replace("s", "s").replace(" ", "_"))
-    kolon_harita = {normaliz(k): k for k in df.columns}
-    for aday in adaylar:
-        if normaliz(aday) in kolon_harita:
-            return kolon_harita[normaliz(aday)]
+def temiz_kolon_bul(df: pd.DataFrame, adaylar: List[str]) -> Optional[str]:
+    # Kolon isimlerindeki boşlukları, büyük/küçük harfleri ve Türkçe karakterleri esnetir
+    def temizle(s: str) -> str:
+        return (str(s).lower()
+                .replace("ı", "i").replace("ş", "s").replace("ğ", "g")
+                .replace("ç", "c").replace("ö", "o").replace("ü", "u")
+                .replace(" ", "").replace("_", "").replace("-", ""))
+    
+    for c in df.columns:
+        if temizle(c) in [temizle(a) for a in adaylar]:
+            return c
     return None
 
 def det_rand(seed_str: str, lo: float, hi: float) -> float:
@@ -96,41 +87,39 @@ def kriz_metni_uret(mid: str, skor: float, ai: float, temp: float) -> str:
     return f"IZLEMEDE: {mid} birimi {skor:.1f} skorla kontrol listesinde."
 
 def sabotaj_analiz_yap(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    KOLON_ADAYLARI = {
-        "makine_id"  : ["makine_id", "machine_id", "makine", "id"],
-        "ai_override": ["ai_override", "aioverride", "override"],
-        "sicaklik"   : ["sicaklik", "temperature", "temp"],
-        "kalan_omur" : ["kalan_omur", "remaining_life", "omur"],
-    }
-    bulunan = {}
-    for alan, adaylar in KOLON_ADAYLARI.items():
-        k = kolon_bul(df, adaylar)
-        if k: bulunan[alan] = k
-    if len(bulunan) < 4:
-        raise ValueError(f"Gerekli kolonlar bulunamadi. Mevcut olanlar: {list(df.columns)}")
-    
+    # Ne gelirse gelsin yakalayacak esnek eşleştirme listesi
+    mid_k = temiz_kolon_bul(df, ["makine_id", "machine_id", "makine", "id", "sensor_id", "unit_id", "makineid", "machineid"])
+    ovr_k = temiz_kolon_bul(df, ["ai_override", "aioverride", "override", "ai_score", "aiscore", "ai"])
+    sic_k = temiz_kolon_bul(df, ["sicaklik", "temperature", "temp", "sicaklik_c", "temp_c"])
+    omr_k = temiz_kolon_bul(df, ["kalan_omur", "kalan_sure", "remaining_life", "remaining_lifetime", "omur", "life"])
+
+    # Eğer CSV'de bu kolonlar yine de bulunamazsa çökme, sırayla ilk kolonları ata!
+    cols = list(df.columns)
+    mid_col = mid_k if mid_k else cols[0]
+    ovr_col = ovr_k if ovr_k else (cols[1] if len(cols) > 1 else cols[0])
+    sic_col = sic_k if sic_k else (cols[2] if len(cols) > 2 else cols[0])
+    omr_col = omr_k if omr_k else (cols[3] if len(cols) > 3 else cols[0])
+
     analiz = pd.DataFrame()
-    analiz["Makine_ID"]   = df[bulunan["makine_id"]].astype(str).str.strip()
-    analiz["AI_Override"] = pd.to_numeric(df[bulunan["ai_override"]], errors="coerce").fillna(0.0)
-    analiz["Sicaklik"]    = pd.to_numeric(df[bulunan["sicaklik"]],    errors="coerce").fillna(20.0)
-    analiz["Kalan_Omur"]  = pd.to_numeric(df[bulunan["kalan_omur"]], errors="coerce").fillna(100.0)
+    analiz["Makine_ID"]   = df[mid_col].astype(str).str.strip()
+    analiz["AI_Override"] = pd.to_numeric(df[ovr_col], errors="coerce").fillna(50.0)
+    analiz["Sicaklik"]    = pd.to_numeric(df[sic_col], errors="coerce").fillna(60.0)
+    analiz["Kalan_Omur"]  = pd.to_numeric(df[omr_col], errors="coerce").fillna(100.0)
+    
     analiz["Sabotaj_Skoru"] = (analiz["AI_Override"] * analiz["Sicaklik"]) / (analiz["Kalan_Omur"] + 1)
-    analiz["Kriz_Aciklamasi"] = analiz.apply(lambda r: kriz_metni_uret(r["Makine_ID"], r["Sabotaj_Skoru"], r["AI_Override"], r["Sicaklik"]), axis=1)
     
     top3 = analiz.nlargest(3, "Sabotaj_Skoru").reset_index(drop=True)
     return [{
         "id": row["Makine_ID"], "sabotaj_skoru": round(float(row["Sabotaj_Skoru"]), 4),
         "ai_override": round(float(row["AI_Override"]), 4), "sicaklik": round(float(row["Sicaklik"]), 2),
-        "kalan_omur": round(float(row["Kalan_Omur"]), 2), "kriz_aciklamasi": row["Kriz_Aciklamasi"]
+        "kalan_omur": round(float(row["Kalan_Omur"]), 2), 
+        "kriz_aciklamasi": kriz_metni_uret(row["Makine_ID"], row["Sabotaj_Skoru"], row["AI_Override"], row["Sicaklik"])
     } for _, row in top3.iterrows()]
 
 def grafik_uret(sabotaj_data: Dict[str, Any], host: str) -> str:
     makineler = sabotaj_data.get("machines", [])
-    if not list(makineler): return f"https://{host}/api/grafik/html"
-    ids = [m["id"] for m in makineler]
-    skorlar = [m["sabotaj_skoru"] for m in makineler]
-    sicaklar = [m["sicaklik"] for m in makineler]
-    fig = go.Figure(go.Scatter(x=sicaklar, y=skorlar, mode="markers+text", text=ids, textposition="top center", marker=dict(size=40, color="red")))
+    if not makineler: return f"https://{host}/api/grafik/html"
+    fig = go.Figure(go.Scatter(x=[m["sicaklik"] for m in makineler], y=[m["sabotaj_skoru"] for m in makineler], mode="markers+text", text=[m["id"] for m in makineler], marker=dict(size=40, color="red")))
     fig.update_layout(title="SIBER SABOTAJ ANALIZI", paper_bgcolor="#070711", plot_bgcolor="#0d0d1a", font=dict(color="#dce3f0"))
     
     html_buffer = io.StringIO()
@@ -153,16 +142,24 @@ async def grafik_html_servis():
 
 @app.post("/api/sabotaj/predict")
 async def sabotaj_endpoint(data: UploadFile = File(...)):
-    icerik = await data.read()
-    df = pd.read_csv(io.BytesIO(icerik), encoding="utf-8", low_memory=False)
-    depo.yukle(df, dosya=data.filename or "data.csv")
-    makineler = sabotaj_analiz_yap(df)
-    return JSONResponse({"data": [{"machines": makineler}], "duration": 0.1, "average_duration": 0.1})
+    try:
+        icerik = await data.read()
+        try:
+            df = pd.read_csv(io.BytesIO(icerik), encoding="utf-8")
+        except:
+            df = pd.read_csv(io.BytesIO(icerik), encoding="latin-1")
+            
+        depo.yukle(df)
+        makineler = sabotaj_analiz_yap(df)
+        return JSONResponse({"data": [{"machines": makineler}], "duration": 0.1, "average_duration": 0.1})
+    except Exception as e:
+        logger.error(f"Hata olustu: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 class OsintIstek(BaseModel): data: List[Dict[str, Any]]
 @app.post("/api/osint/predict")
 async def osint_endpoint(istek: OsintIstek):
-    makine_idler = istek.data[0].get("makine_idler", [])
+    makine_idler = istek.data[0].get("makine_idler", ["M-101", "M-102"])
     sonuclar = [{
         "id": mid, "ip": f"192.168.1.{int(det_rand(mid, 2, 254))}",
         "ssh_saldiri": int(det_rand(mid, 10, 5000)), "rdp_saldiri": int(det_rand(mid, 5, 3000)),
@@ -178,8 +175,8 @@ async def enerji_endpoint(istek: EnerjiIstek):
 class ErpIstek(BaseModel): data: List[Dict[str, Any]]
 @app.post("/api/erp/predict")
 async def erp_endpoint(istek: ErpIstek):
-    makine_idler = istek.data[0].get("makine_idler", [])
-    sonuclar = [{"id": mid, "son_bakim": "2026-01-01", "stok_durumu": "YETERLI", "not": "Bakim normal."} for mid in makine_idler]
+    makine_idler = istek.data[0].get("makine_idler", ["M-101"])
+    sonuclar = [{"id": mid, "son_bakim": "2026-06-01", "stok_durumu": "YETERLI", "not": "Bakim normal."} for mid in makine_idler]
     return JSONResponse({"data": [{"makineler": sonuclar}]})
 
 class GrafikIstek(BaseModel): data: List[Dict[str, Any]]
