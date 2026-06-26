@@ -1,0 +1,5 @@
+{
+  "summary":  "Render.com deployment configuration file (render.yaml). Defines a free-tier web service named 'siber-komuta-merkezi' with Python runtime, auto-build from requirements.txt, uvicorn start command with $PORT env var, and /health check path.",
+  "updatedAt":  "2026-06-25T20:58:13.573692800Z",
+  "userFacing":  true
+}

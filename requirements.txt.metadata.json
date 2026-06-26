@@ -1,0 +1,5 @@
+{
+  "summary":  "Python dependencies file for the FastAPI Cyber Command Center. Pins exact versions for reproducibility: fastapi, uvicorn[standard], pandas, numpy, plotly, kaleido, python-multipart, pydantic.",
+  "updatedAt":  "2026-06-25T20:30:22.283428Z",
+  "userFacing":  true
+}

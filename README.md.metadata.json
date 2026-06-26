@@ -1,0 +1,5 @@
+{
+  "summary":  "Complete step-by-step deployment guide (README.md) for getting the FastAPI Cyber Command Center live on Render.com with zero downtime. Covers: GitHub repo creation, Render.com service setup (5 clicks), UptimeRobot keep-alive configuration (3 clicks), and the single n8n variable change needed. Also includes architecture diagram, API endpoint reference, and troubleshooting section.",
+  "updatedAt":  "2026-06-25T20:59:07.177082200Z",
+  "userFacing":  true
+}

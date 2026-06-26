@@ -1,0 +1,4 @@
+{
+  "summary":  ".gitignore file for the FastAPI project. Excludes Python cache, virtual environments, .env secrets, static generated files, IDE configs, and OS artifacts.",
+  "updatedAt":  "2026-06-25T20:58:23.110346Z"
+}
